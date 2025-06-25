@@ -905,3 +905,38 @@ class ComponentFactory(object):
         for idx, i in enumerate(labels_set):
             label_mapping[i] = idx
         return [label_mapping[i] for i in raw_labels]
+
+     @classmethod
+    def create_my_contrastive_collate_fn(cls, tokenizer: AutoTokenizer):
+        def collate_fn(batch):
+            # batch is a list of (anchor_text, [candidate_texts], [levels])
+            
+            # Replace placeholder [MASK] with the real mask token
+            mask_token = tokenizer.mask_token
+            batch_tuples = [
+                (anchor.replace("[MASK]", mask_token), 
+                 [cand.replace("[MASK]", mask_token) for cand in cands], 
+                 levels)
+                for anchor, cands, levels in batch
+            ]
+            
+            batch_anchors = [t[0] for t in batch_tuples]
+            batch_candidates_nested = [t[1] for t in batch_tuples]
+            batch_levels_nested = [t[2] for t in batch_tuples]
+            
+            # This stores how many candidates each anchor has
+            num_candidates_per_anchor = [len(cands) for cands in batch_candidates_nested]
+            
+            # Flatten lists for single-pass tokenization
+            batch_candidates_flat = [cand for sublist in batch_candidates_nested for cand in sublist]
+            batch_levels_flat = [level for sublist in batch_levels_nested for level in sublist]
+            
+            if not batch_anchors: return None
+
+            anchor_inputs = tokenizer(batch_anchors, padding=True, truncation=True, return_tensors="pt")
+            candidate_inputs = tokenizer(batch_candidates_flat, padding=True, truncation=True, return_tensors="pt")
+            levels_tensor = torch.tensor(batch_levels_flat, dtype=torch.long)
+            
+            return anchor_inputs, candidate_inputs, levels_tensor, num_candidates_per_anchor
+            
+        return collate_fn

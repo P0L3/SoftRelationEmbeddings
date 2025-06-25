@@ -80,13 +80,43 @@ class TrainingExecutor(xb.TrainingExecutor):
         )
 
     def _run_training(self) -> None:
+        
+        # --- START OF MODIFICATIONS ---
+        collate_function = None
+        if self._conf.my_custom_dataset:
+            print("Using custom dataset and collate function.")
+            # We need the tokenizer to create the collate function
+            # Determine which tokenizer to use based on the model config
+            if self._conf.albert_enc_rel:
+                tokenizer_name = experiment.ALBERT_XX_LARGE_VERSION
+            elif self._conf.roberta_enc_rel:
+                tokenizer_name = experiment.ROBERTA_LARGE_VERSION
+            else:
+                tokenizer_name = experiment.BERT_BASE_VERSION
+                
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+            
+            # VERY IMPORTANT: The repo's RelationEncoder adds special tokens and resizes the model's
+            # embedding layer. We MUST ensure our tokenizer and model are synchronized.
+            special_tokens_to_add = ["[E1]", "[/E1]", "[E2]", "[/E2]"]
+            tokenizer.add_special_tokens({"additional_special_tokens": special_tokens_to_add})
+            self._model.encoder.encoder.resize_token_embeddings(len(tokenizer))
+            print("Tokenizer and model embedding layer resized for special tokens.")
+
+            # Create our custom collate function
+            collate_function = component_factory.ComponentFactory.create_my_contrastive_collate_fn(tokenizer)
+        else:
+            # Original logic for all other datasets
+            collate_function = lambda x: functools.reduce(operator.add, x)
+
         data_loader = data.DataLoader(
             self._dataset,
             batch_size=self._conf.batch_size,
-            collate_fn=lambda x: functools.reduce(operator.add, x),
+            collate_fn=collate_function,
             shuffle=True,
-            drop_last=True
+            drop_last=True # Keep this to ensure batches are uniform
         )
+        # --- END OF MODIFICATIONS ---
 
         print("Num of trainable params: {}".format(sum(p.numel() for p in self._model.parameters() if p.requires_grad)))
         print("Size of dataset: {}".format(len(self._dataset)))
@@ -117,6 +147,66 @@ class TrainingExecutor(xb.TrainingExecutor):
                         if print_details:
                             util.printing_tools.print_header("Iteration {}".format(iteration_idx), level=1)
                         if self._conf.pretrain:
+                            
+                            # --- NEW LOGIC BRANCH FOR YOUR DATASET ---
+                            if self._conf.my_custom_dataset:
+                                try:
+                                    if batch is None: continue
+                                    anchor_inputs, candidate_inputs, levels, candidates_per_anchor = batch
+
+                                    if self._conf.gpu:
+                                        anchor_inputs = {k: v.cuda() for k, v in anchor_inputs.items()}
+                                        candidate_inputs = {k: v.cuda() for k, v in candidate_inputs.items()}
+                                        levels = levels.cuda()
+                                    
+                                    encoder = self._model.encoder
+                                    loss_fn = self._model.pretraining_loss_layer
+
+                                    anchor_outputs = encoder(input_ids=anchor_inputs['input_ids'], attention_mask=anchor_inputs['attention_mask'])[0]
+                                    candidate_outputs = encoder(input_ids=candidate_inputs['input_ids'], attention_mask=candidate_inputs['attention_mask'])[0]
+
+                                    anchor_mask_indices = (anchor_inputs['input_ids'] == tokenizer.mask_token_id).nonzero(as_tuple=True)
+                                    candidate_mask_indices = (candidate_inputs['input_ids'] == tokenizer.mask_token_id).nonzero(as_tuple=True)
+                                    anchor_embs = anchor_outputs[anchor_mask_indices[0], anchor_mask_indices[1]]
+                                    candidate_embs = candidate_outputs[candidate_mask_indices[0], candidate_mask_indices[1]]
+                                    
+                                    total_loss = 0
+                                    candidate_start_idx = 0
+                                    for i in range(anchor_embs.shape[0]): # For each anchor in the batch
+                                        num_cands = candidates_per_anchor[i]
+                                        if num_cands == 0: continue
+                                        candidate_end_idx = candidate_start_idx + num_cands
+                                        
+                                        loss_i = loss_fn(
+                                            anchor_embs[i],
+                                            candidate_embs[candidate_start_idx:candidate_end_idx],
+                                            levels[candidate_start_idx:candidate_end_idx]
+                                        )
+                                        total_loss += loss_i
+                                        candidate_start_idx = candidate_end_idx
+
+                                    if anchor_embs.shape[0] > 0:
+                                        loss = total_loss / anchor_embs.shape[0]
+                                        losses.append(loss.item())
+                                        loss.backward()
+
+                                        if (iteration_idx + 1) % self._conf.grad_acc_iters == 0:
+                                            if print_details: print("updating model parameters...")
+                                            utils.clip_grad_norm_(self._model.parameters(), self._conf.max_grad_norm)
+                                            self._optimizer.step()
+                                            self._optimizer.zero_grad()
+                                            if print_details: print("OK")
+                                        
+                                        if print_details:
+                                            print("Weighted Contrastive Loss: {:.4f}".format(loss.item()))
+                                            print()
+                                except Exception as e:
+                                    print(f"Error in custom training loop: {e}")
+                                    continue
+                            # --- END OF NEW LOGIC BRANCH ---
+                            
+                            
+                            
                             if (
                                     self._conf.nyt_dataset or
                                     self._conf.wikidata_dataset or
