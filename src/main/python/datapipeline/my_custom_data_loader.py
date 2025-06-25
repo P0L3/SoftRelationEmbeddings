@@ -15,7 +15,7 @@ class MyCustomDataLoader(base_data_loader.BaseDataLoader):
             df = pd.read_parquet(self._data_file_path)
         elif self._data_file_path.endswith(".csv"):
             df = pd.read_csv(self._data_file_path)
-        elif self._data_file_path.endswith(".pickle")
+        elif self._data_file_path.endswith(".pickle"):
             df = pd.read_pickle(self._data_file_path)
         else:
             raise ValueError("Unsupported file format. Please use .parquet or .csv")

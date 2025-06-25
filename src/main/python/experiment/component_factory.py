@@ -510,6 +510,19 @@ class ComponentFactory(object):
         """
         dataset = None
         pickle_file = None
+        
+        # --- START OF NEW CODE ---
+        if conf.my_custom_dataset:
+            print("Creating custom dataset from config.")
+            # Define the path to your data directory and file
+            data_path = os.path.join(conf.data_dir, "my_data_dir") # Change "my_data_dir" if needed
+            data_file = "my_data_df.pickle" # The file you created in the notebook
+            data_loader = my_custom_data_loader.MyCustomDataLoader(data_path, data_file=data_file)
+            dataset = my_contrastive_dataset.MyContrastiveDataset(data_loader)
+            return dataset
+        # --- END OF NEW CODE ---
+        
+        
         # If pre-train
         if conf.pretrain:
             if conf.nyt_dataset:
@@ -780,12 +793,20 @@ class ComponentFactory(object):
         model = None
         if conf.pretrain:
             encoder = cls._create_relation_encoder(conf)
-            loss_layer = contrastive_pretrain_loss.ContrastivePretrainLoss(
-                encoder.hidden_size(),
-                h_and_t=conf.ht,
-                rel_mask=conf.rel_mask,
-                temperature=conf.cp_loss_tau
-            )
+            
+            ## NEW
+            loss_layer = None
+            if conf.my_custom_dataset:
+                print("Using MyWeightedInfoNCELoss.")
+                loss_layer = my_weighted_infonce_loss.MyWeightedInfoNCELoss(temperature=conf.cp_loss_tau)
+            # --- END OF NEW CODE ---
+            else:
+                loss_layer = contrastive_pretrain_loss.ContrastivePretrainLoss(
+                    encoder.hidden_size(),
+                    h_and_t=conf.ht,
+                    rel_mask=conf.rel_mask,
+                    temperature=conf.cp_loss_tau
+                )
             model = rel_encoder.RelEncoder(encoder, loss_layer)
 
         else:
@@ -906,7 +927,7 @@ class ComponentFactory(object):
             label_mapping[i] = idx
         return [label_mapping[i] for i in raw_labels]
 
-     @classmethod
+    @classmethod
     def create_my_contrastive_collate_fn(cls, tokenizer: AutoTokenizer):
         def collate_fn(batch):
             # batch is a list of (anchor_text, [candidate_texts], [levels])

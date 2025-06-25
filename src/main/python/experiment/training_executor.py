@@ -146,64 +146,61 @@ class TrainingExecutor(xb.TrainingExecutor):
                     ) as iteration_timer:
                         if print_details:
                             util.printing_tools.print_header("Iteration {}".format(iteration_idx), level=1)
-                        if self._conf.pretrain:
-                            
-                            # --- NEW LOGIC BRANCH FOR YOUR DATASET ---
-                            if self._conf.my_custom_dataset:
-                                try:
-                                    if batch is None: continue
-                                    anchor_inputs, candidate_inputs, levels, candidates_per_anchor = batch
+                        # YOUR CUSTOM LOGIC BRANCH
+                        if self._conf.pretrain and self._conf.my_custom_dataset:
+                            try:
+                                if batch is None: continue
+                                anchor_inputs, candidate_inputs, levels, candidates_per_anchor = batch
 
-                                    if self._conf.gpu:
-                                        anchor_inputs = {k: v.cuda() for k, v in anchor_inputs.items()}
-                                        candidate_inputs = {k: v.cuda() for k, v in candidate_inputs.items()}
-                                        levels = levels.cuda()
+                                if self._conf.gpu:
+                                    anchor_inputs = {k: v.cuda() for k, v in anchor_inputs.items()}
+                                    candidate_inputs = {k: v.cuda() for k, v in candidate_inputs.items()}
+                                    levels = levels.cuda()
+                                
+                                encoder = self._model.encoder
+                                loss_fn = self._model.pretraining_loss_layer
+
+                                anchor_outputs = encoder(input_ids=anchor_inputs['input_ids'], attention_mask=anchor_inputs['attention_mask'])[0]
+                                candidate_outputs = encoder(input_ids=candidate_inputs['input_ids'], attention_mask=candidate_inputs['attention_mask'])[0]
+
+                                anchor_mask_indices = (anchor_inputs['input_ids'] == tokenizer.mask_token_id).nonzero(as_tuple=True)
+                                candidate_mask_indices = (candidate_inputs['input_ids'] == tokenizer.mask_token_id).nonzero(as_tuple=True)
+                                
+                                anchor_embs = anchor_outputs[anchor_mask_indices[0], anchor_mask_indices[1]]
+                                candidate_embs = candidate_outputs[candidate_mask_indices[0], candidate_mask_indices[1]]
+                                
+                                total_loss, processed_anchors = 0, 0
+                                candidate_start_idx = 0
+                                for i in range(anchor_embs.shape[0]):
+                                    num_cands = candidates_per_anchor[i]
+                                    if num_cands == 0: continue
                                     
-                                    encoder = self._model.encoder
-                                    loss_fn = self._model.pretraining_loss_layer
+                                    candidate_end_idx = candidate_start_idx + num_cands
+                                    total_loss += loss_fn(
+                                        anchor_embs[i],
+                                        candidate_embs[candidate_start_idx:candidate_end_idx],
+                                        levels[candidate_start_idx:candidate_end_idx]
+                                    )
+                                    candidate_start_idx = candidate_end_idx
+                                    processed_anchors += 1
 
-                                    anchor_outputs = encoder(input_ids=anchor_inputs['input_ids'], attention_mask=anchor_inputs['attention_mask'])[0]
-                                    candidate_outputs = encoder(input_ids=candidate_inputs['input_ids'], attention_mask=candidate_inputs['attention_mask'])[0]
+                                if processed_anchors > 0:
+                                    loss = total_loss / processed_anchors
+                                    losses.append(loss.item())
+                                    loss.backward()
 
-                                    anchor_mask_indices = (anchor_inputs['input_ids'] == tokenizer.mask_token_id).nonzero(as_tuple=True)
-                                    candidate_mask_indices = (candidate_inputs['input_ids'] == tokenizer.mask_token_id).nonzero(as_tuple=True)
-                                    anchor_embs = anchor_outputs[anchor_mask_indices[0], anchor_mask_indices[1]]
-                                    candidate_embs = candidate_outputs[candidate_mask_indices[0], candidate_mask_indices[1]]
-                                    
-                                    total_loss = 0
-                                    candidate_start_idx = 0
-                                    for i in range(anchor_embs.shape[0]): # For each anchor in the batch
-                                        num_cands = candidates_per_anchor[i]
-                                        if num_cands == 0: continue
-                                        candidate_end_idx = candidate_start_idx + num_cands
-                                        
-                                        loss_i = loss_fn(
-                                            anchor_embs[i],
-                                            candidate_embs[candidate_start_idx:candidate_end_idx],
-                                            levels[candidate_start_idx:candidate_end_idx]
-                                        )
-                                        total_loss += loss_i
-                                        candidate_start_idx = candidate_end_idx
-
-                                    if anchor_embs.shape[0] > 0:
-                                        loss = total_loss / anchor_embs.shape[0]
-                                        losses.append(loss.item())
-                                        loss.backward()
-
-                                        if (iteration_idx + 1) % self._conf.grad_acc_iters == 0:
-                                            if print_details: print("updating model parameters...")
-                                            utils.clip_grad_norm_(self._model.parameters(), self._conf.max_grad_norm)
-                                            self._optimizer.step()
-                                            self._optimizer.zero_grad()
-                                            if print_details: print("OK")
-                                        
-                                        if print_details:
-                                            print("Weighted Contrastive Loss: {:.4f}".format(loss.item()))
-                                            print()
-                                except Exception as e:
-                                    print(f"Error in custom training loop: {e}")
-                                    continue
-                            # --- END OF NEW LOGIC BRANCH ---
+                                    if (iteration_idx + 1) % self._conf.grad_acc_iters == 0:
+                                        if print_details: print("updating model parameters...")
+                                        utils.clip_grad_norm_(self._model.parameters(), self._conf.max_grad_norm)
+                                        self._optimizer.step()
+                                        self._optimizer.zero_grad()
+                                        if print_details: print("OK")
+                                    if print_details: print("Weighted Contrastive Loss: {:.4f}".format(loss.item()))
+                            except Exception as e:
+                                print(f"ERROR in custom training loop: {e}")
+                                continue
+                        
+                        # --- ORIGINAL LOGIC FOR OTHER DATASETS ---
                             
                             
                             
