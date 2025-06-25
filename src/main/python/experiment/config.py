@@ -47,6 +47,9 @@ class Config(xb.BaseConfig):
     DEFAULT_ACE_DATASET = False
     """bool: The default setting for loading the ACE2005 dataset."""
 
+    DEFAULT_MY_CUSTOM_DATASET = False
+    """bool: The default setting for using the custom weighted dataset."""
+    
     DEFAULT_ACE_FINE_GRAINED = False
     """bool: The default setting for using fine-grained relation types or  not."""
 
@@ -201,6 +204,8 @@ class Config(xb.BaseConfig):
         self._checkpoint = None
         self._checkpoints_dir = None
         self._num_classes = 1
+        
+        self._my_custom_dataset = self.DEFAULT_MY_CUSTOM_DATASET
 
     # Properties
     @decorators.optional
@@ -447,6 +452,15 @@ class Config(xb.BaseConfig):
     def mlp_classifier(self) -> bool:
         """bool: Specifies whether to use an MLP classifier or not"""
         return self._mlp_classifier
+    
+    @property
+    def my_custom_dataset(self) -> bool:
+        """bool: Specifies whether to use my custom weighted dataset."""
+        return self._my_custom_dataset
+
+    @my_custom_dataset.setter
+    def my_custom_dataset(self, my_custom_dataset: bool) -> None:
+        self._my_custom_dataset = bool(my_custom_dataset)
 
     @mlp_classifier.setter
     def mlp_classifier(self, mlp_classifier: bool) -> None:

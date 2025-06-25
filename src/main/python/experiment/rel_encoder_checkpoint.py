@@ -39,7 +39,7 @@ import torch
 import typing
 
 
-class RelEncoderCheckpoint(xb.Checkpoint):
+class RelEncoderCheckpoint(object):
     """This represents a saved Entity Encoder Checkpoint."""
 
     def __init__(self, epoch: int, encoder_state: dict, loss_layer_state: dict, optimizer_state: dict):

@@ -40,7 +40,7 @@ import torch
 import typing
 
 
-class Checkpoint(xb.Checkpoint):
+class Checkpoint(object):
     """This represents a training checkpoint"""
 
     def dump(self, path: str) -> typing.Any:

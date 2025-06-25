@@ -39,7 +39,7 @@ import torch
 import typing
 
 
-class EnCoreModelCheckpoint(xb.Checkpoint):
+class EnCoreModelCheckpoint(object):
     """This represents a saved Entity Encoder Checkpoint."""
 
     def __init__(self, epoch: int, model_state: dict, optimizer_state: dict):
